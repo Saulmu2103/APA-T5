@@ -409,7 +409,73 @@ def mono2stereo(ficIzq, ficDer, ficEste):
 ##### Código de `codEstereo()`
 
 ```python
+def codEstereo(ficEste, ficCod):
+    """
+    Recibe un fichero estereo 16 bits y lo convierte a uno de 32 bits guardando la semisuma en los 16 MSB y la semidiferencia en los 16 LSB
 
+    Entrada:
+        - ficEste: fichero de audio estereo
+    Salida:
+        - ficCod: fichero de audio MONO a 32 bits
+
+    """
+    # --- LECTURA DE DATOS Y CREACION DE LA NUEVA CABECERA ---
+        
+    with open(ficEste, 'rb') as f:
+        cabecera = f.read(44)
+        datos = f.read()
+
+    (chunkID, chunkSize, format,
+    sub1ID, sub1Size, audioFormat, numChannels,
+    sampleRate, byteRate, blockAlign, bitsPerSample,
+    sub2ID, sub2Size) = struct.unpack('4sI4s4sIHHIIHH4sI', cabecera)
+    nCanalesSalida = 1
+    bitsPorMuestraSalida = 32
+    blockAlignSalida = nCanalesSalida * (bitsPorMuestraSalida // 8)
+    byteRateSalida = sampleRate * blockAlignSalida
+    nFrames = len(datos) // 4
+
+    newSub2Size = nFrames * blockAlignSalida
+    newChunkSize = 36 + newSub2Size
+    nuevaCabecera = struct.pack(
+        '<4sI4s4sIHHIIHH4sI', 
+        chunkID,
+        newChunkSize,
+        format,
+        sub1ID,
+        sub1Size,
+        audioFormat,
+        nCanalesSalida,
+        sampleRate,
+        byteRateSalida,
+        blockAlignSalida,
+        bitsPorMuestraSalida,
+        sub2ID,
+        newSub2Size
+    )
+
+    # --- LECTURA DE DATOS DE AUDIO CALCULO DE LA SEMISUMA Y LA SEMIDIFERENCIA Y PROCESADO ---
+
+    with open(ficCod, 'wb') as s:
+        s.write(nuevaCabecera)
+        for i in range(nFrames):
+            off = i * 4
+            L = struct.unpack_from('<h', datos, off)[0]
+            R = struct.unpack_from('<h', datos, off + 2)[0]
+            semisuma = (L + R)  // 2
+            semidiferencia = (L - R) // 2
+
+            if semisuma > 32767: semisuma = 32767
+            if semisuma < -32768: semisuma = -32768
+            if semidiferencia > 32767: semidiferencia = 32767
+            if semidiferencia < -32768: semidiferencia = -32768
+            msbU = semisuma & 0xFFFF
+            lsbU = semidiferencia & 0xFFFF
+            u32 = (msbU << 16) | lsbU
+            signed32 = u32 - (1 << 32) if u32 >= (1 << 31) else u32
+            s.write(struct.pack('<i', signed32))
+
+    print("Se ha convertido a 32 bits MONO siendo los 16 MSB la semisuma y los 16 LSB la semidiferencia")
 ```
 
 ##### Código de `decEstereo()`

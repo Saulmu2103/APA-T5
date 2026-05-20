@@ -481,7 +481,73 @@ def codEstereo(ficEste, ficCod):
 ##### Código de `decEstereo()`
 
 ```python
+def decEstereo(ficCod, ficEste):
+    """
+    La funcion recibe un archivo de 32 bits MONO y lo convierte a un archivo 16 bits ESTEREO
 
+    Entradas:
+        - ficCod: este archivo contiene una señal codificada en 32 bits MONO donde los 16 MSB representan la semisuma de la señal original estereo y los 16 LSB representan la semidiferencia
+    Salidas:
+        - ficEste: fichero de salida estereo a 16 bits
+    """
+    with open(ficCod, 'rb') as f:
+        cabecera = f.read(44)
+        (riffId, riffSize, waveId,
+         fmtId, fmtSize,
+         audioFormat, numChannels,
+         sampleRate, byteRate,
+         blockAlign, bitsPerSample,
+         dataId, dataSize) = struct.unpack("<4sI4s4sIHHIIHH4sI", cabecera)
+
+        datos = f.read(dataSize)
+
+    datosSalida = bytearray()
+    for i in range(0, len(datos), 4):
+        v32 = struct.unpack_from('<i', datos, i)[0]
+
+        s = (v32 >> 16) & 0xFFFF
+        d = v32 & 0xFFFF
+        if s & 0x8000:
+            s -= 0x10000
+        if d & 0x8000:
+            d -= 0x10000
+
+        L = s + d
+        R = s - d
+
+        if L > 32767:
+            L = 32767
+        elif L < -32768:
+            L = -32768
+        if R > 32767:
+            R = 32767
+        elif R < -32768:
+            R = -32768
+
+        datosSalida.extend(struct.pack('<h', int(L)))
+        datosSalida.extend(struct.pack('<h', int(R)))
+
+    outChannels = 2
+    outBits = 16
+    outBlockAlign = outChannels * outBits // 8
+    outByteRate = sampleRate * outBlockAlign
+    outDataSize = len(datosSalida)
+    outRiffSize = 4 + (8 + 16) + (8 + outDataSize)
+
+    with open(ficEste, "wb") as salida:
+        salida.write(struct.pack("<4sI4s", b"RIFF", outRiffSize, b"WAVE"))
+        salida.write(struct.pack("<4sI", b"fmt ", 16))
+        salida.write(struct.pack("<HHIIHH",
+                              1,                
+                              outChannels,
+                              sampleRate,
+                              outByteRate,
+                              outBlockAlign,
+                              outBits))
+        salida.write(struct.pack("<4sI", b"data", outDataSize))
+        salida.write(datosSalida)
+
+    print("Se ha convertido la señal a 16 bits ESTEREO")
 ```
 
 #### Subida del resultado al repositorio GitHub y *pull-request*

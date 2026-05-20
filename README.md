@@ -5,7 +5,7 @@
 > [!Important]
 > Introduzca a continuación su nombre y apellidos:
 >
-> Fulano Mengano Zutano
+> Saül Muñoz Rodríguez
 
 ## Aviso Importante
 
@@ -208,11 +208,215 @@ pantalla, debe hacerse en formato *markdown*).
 
 ##### Código de `estereo2mono()`
 
+```python
+def estereo2mono(ficEste, ficMono, canal=2):
+    """
+    Entradas: 
+        - ficEste: fichero en formato estereo
+        - canal: tipo concreto de la señal que se almacenara (0, 1, 2, 3) por defecto 2
+    
+    Salidas:
+        - ficMono: fichero mono 
+    """
+    if canal not in (0, 1, 2, 3):
+        raise ValueError("Canal debe ser 0, 1, 2 o 3")
+
+    with open(ficEste, "rb") as f:
+
+        # --- Leer encabezado RIFF estándar (12 bytes) ---
+        
+        header = f.read(12)
+        riffId, riffSize, waveId = struct.unpack("<4sI4s", header)
+        if riffId != b"RIFF" or waveId != b"WAVE":
+            raise ValueError("No es un WAV válido")
+
+        # --- Leer chunk fmt (24 bytes típicos) ---
+        
+        fmtHeader = f.read(8)
+        fmtId, fmtSize = struct.unpack("<4sI", fmtHeader)
+        if fmtId != b"fmt ":
+            raise ValueError("No se encontró chunk fmt estándar")
+
+        fmtData = f.read(fmtSize)
+        audioFormat, numChannels, sampleRate, byteRate, blockAlign, bitsPerSample = \
+            struct.unpack("<HHIIHH", fmtData[:16])
+
+        if audioFormat != 1:
+            raise ValueError("Solo PCM sin comprimir")
+        if numChannels != 2:
+            raise ValueError("Se requiere WAV estéreo")
+        if bitsPerSample != 16:
+            raise ValueError("Solo soporta 16 bits")
+
+        dataHeader = f.read(8)
+        dataId, dataSize = struct.unpack("<4sI", dataHeader)
+        if dataId != b"data":
+            raise ValueError("No se encontró chunk data estándar")
+            
+        raw = f.read(dataSize)
+        
+    bytesPerFrame = blockAlign
+    nframes = len(raw) // bytesPerFrame
+    fmt = '<' + 'h' * (nframes * 2)
+    muestras = struct.unpack(fmt, raw[:nframes * bytesPerFrame])
+
+    salida = bytearray()
+        
+    for i in range(0, len(muestras), 2):
+        L = muestras[i]
+        R = muestras[i+1]
+
+        if canal == 0:
+            mono = L
+        elif canal == 1:
+            mono = R
+        elif canal == 2:
+            mono = (L + R) // 2
+        else:
+            mono = (L - R) //2 
+      
+        if mono < -32768:
+            mono = -32768
+        elif mono > 32767:
+            mono = 32767
+
+        salida.extend(struct.pack('h', mono))
+
+    canalesSalida = 1
+    bitsSalida = 16
+    outBlockAlignSalida = 2
+    byteRateSalida = sampleRate * outBlockAlignSalida
+    outDataSize = len(salida)
+    riffSize = 4 + (8 + 16) + (8 + outDataSize)
+
+    with open(ficMono, 'wb') as out:
+        out.write(struct.pack("<4sI4s", b"RIFF", riffSize, b'WAVE'))
+        out.write(struct.pack("<4sI", b"fmt ", 16))
+        out.write(struct.pack("<HHIIHH",
+                              1, 
+                              canalesSalida,
+                              sampleRate,
+                              byteRateSalida,
+                              outBlockAlignSalida,
+                              bitsSalida))
+        out.write(struct.pack('<4sI', b'data', outDataSize))
+        out.write(salida)
+
+    if canal == 0:
+        print("Se ha convertido a mono usando el canal L")
+    elif canal == 1:
+        print("Se ha convertido a mono usando el canal R")
+    elif canal == 2:
+        print("Se ha convertido a mono usando la semisuma (L+R)/2")
+    else:
+        print("Se ha convertido a mono usando la semidiferencia (L-R)/2")
+
+```
+
 ##### Código de `mono2estereo()`
+
+```python
+def mono2stereo(ficIzq, ficDer, ficEste):
+    """
+    Une dos las entradas L y R de archivos mono en un archivo estereo
+
+    Entradas: 
+        - ficIzq: fichero mono del canal L
+        - ficDer: fichero mono del canal R
+    Salidas:
+        - ficEste: fichero estereo de salida
+    """
+    
+    # --- Leer WAV izquierdo ---
+    
+    with open(ficIzq, "rb") as f:
+        h = f.read(44)
+        (riffId, riffSize, waveId,
+         fmtId, fmtSize,
+         audioFormat, numChannels,
+         sampleRate, byteRate,
+         blockAlign, bitsPerSample,
+         dataId, dataSize) = struct.unpack("<4sI4s4sIHHIIHH4sI", h)
+
+        if audioFormat != 1 or numChannels != 1 or bitsPerSample != 16:
+            raise ValueError("ficIzq debe ser WAV PCM 16-bit MONO")
+
+        rawIzq = f.read(dataSize)
+        muestrasIzq = struct.unpack("<" + "h"*(dataSize//2), rawIzq)
+
+   # --- Leer WAV derecho ---
+    
+    with open(ficDer, "rb") as f:
+        h = f.read(44)
+        (riffId2, riffSize2, waveId2,
+         fmtId2, fmtSize2,
+         audioFormat2, numChannels2,
+         sampleRate2, byteRate2,
+         blockAlign2, bitsPerSample2,
+         dataId2, dataSize2) = struct.unpack("<4sI4s4sIHHIIHH4sI", h)
+
+        if audioFormat2 != 1 or numChannels2 != 1 or bitsPerSample2 != 16:
+            raise ValueError("ficDer debe ser WAV PCM 16-bit MONO")
+
+        if sampleRate2 != sampleRate:
+            raise ValueError("Ambos WAV deben tener la misma frecuencia")
+
+        rawDer = f.read(dataSize2)
+        muestrasDer = struct.unpack("<" + "h"*(dataSize2//2), rawDer)
+
+    # --- Comprobar número de muestras ---
+    
+    if len(muestrasIzq) != len(muestrasDer):
+        raise ValueError("Los dos WAV deben tener el mismo número de muestras")
+
+    nFrames = len(muestrasIzq)
+
+    # --- Construir datos estéreo ---
+    
+    outData = bytearray()
+    for i in range(nFrames):
+        L = muestrasIzq[i]
+        R = muestrasDer[i]
+        outData.extend(struct.pack("<h", L))
+        outData.extend(struct.pack("<h", R))
+
+    # --- Construir WAV estéreo ---
+    
+    outChannels = 2
+    outBits = 16
+    outBlockAlign = outChannels * outBits // 8
+    outByteRate = sampleRate * outBlockAlign
+    outDataSize = len(outData)
+    riffSize = 4 + (8 + 16) + (8 + outDataSize)
+
+    with open(ficEste, "wb") as out:
+        out.write(struct.pack("<4sI4s", b"RIFF", riffSize, b"WAVE"))
+        out.write(struct.pack("<4sI", b"fmt ", 16))
+        out.write(struct.pack("<HHIIHH",
+                              1,               
+                              outChannels,
+                              sampleRate,
+                              outByteRate,
+                              outBlockAlign,
+                              outBits))
+        out.write(struct.pack("<4sI", b"data", outDataSize))
+        out.write(outData)
+
+    print("Se han convertido las señales L y R a estereo!")
+
+```
 
 ##### Código de `codEstereo()`
 
+```python
+
+```
+
 ##### Código de `decEstereo()`
+
+```python
+
+```
 
 #### Subida del resultado al repositorio GitHub y *pull-request*
 
